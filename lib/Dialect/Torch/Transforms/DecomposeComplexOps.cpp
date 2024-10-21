@@ -7806,6 +7806,47 @@ class DecomposeAtenBaddbmmOp : public OpRewritePattern<AtenBaddbmmOp> {
 };
 } // namespace
 
+
+//Decompose `aten.bmm_nt`  op into `aten.view`, `aten.transpose`,
+//`aten.bmm` and again into `aten.view` 
+namespace{
+class DecomposeAtenBmmNtOp : public OpRewritePattern<AtenBmmNtOp> {
+  
+  using OpRewritePattern::OpRewritePattern;
+  
+  LogicalResult matchAndRewrite(AtenBmmNtOp op,
+                                PatternRewriter &rewriter) const
+  override {
+    
+    Location loc = op.getLoc();
+    Value a = op.getA();
+    Value b = op.getB();
+    BaseTensorType aType = a.getType().cast<BaseTensorType>();
+    BaseTensorType bType = b.getType().cast<BaseTensorType>();
+    
+    SmallVector<int64_t> aShape = {aType.getSizes()[0] * aType.getSizes()[1], aType.getSizes()[2], aType.getSizes()[3]};
+    SmallVector<int64_t> bShape = {bType.getSizes()[0] * bType.getSizes()[1], bType.getSizes()[2], bType.getSizes()[3]};
+    
+    Value aReshaped = rewriter.create<AtenViewOp>(loc, a.getType().cast<BaseTensorType>().getWithSizesAndDtype(aShape, aType.getDtype()), a);
+    Value bReshaped = rewriter.create<AtenViewOp>(loc, b.getType().cast<BaseTensorType>().getWithSizesAndDtype(bShape, bType.getDtype()));
+    Value bTransposed = rewriter.create<AtenTransposeIntOp>(loc, bReshaped.getType(), bReshaped, rewriter.getI64IntegerAttr(2), 
+                        rewriter.getI64IntegerAttr(1));
+    
+    Value bmmResult = rewriter.create<AtenBmmOp>(loc, aReshaped.getType(), aReshaped, bTransposed);
+
+    SmallVector<int64_t> resultShape = {aType.getSizes()[0], aType.getSizes()[1], aType.getSizes()[2], bType.getSizes()[2]};
+    Value resultReshaped = rewriter.create<AtenViewOp>(loc, bmmResult.getType().cast<BaseTensorType>().getWithSizesAndDtype(resultShape, 
+                         bmmResult.getType().cast<BaseTensorType>().getDtype()), bmmResult);
+
+    rewriter.replaceOp(op, resultReshaped);
+
+    return success(); 
+    
+  }
+  
+ };
+} //namespace
+
 namespace {
 // Decompose `aten.floorDivide` op into `aten.div.TensorMode` op.
 class DecomposeAtenFloorDivideOp : public OpRewritePattern<AtenFloorDivideOp> {
@@ -9805,6 +9846,7 @@ private:
       patterns.add<DecomposePattern>(context);
   }
 
+
 public:
   DecomposeComplexOpsPass() = default;
   DecomposeComplexOpsPass(ArrayRef<std::string> legalOps) {
@@ -9971,6 +10013,7 @@ public:
     addPatternIfTargetOpIsIllegal<DecomposeAtenTruncOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenFmodTensorOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenBaddbmmOp>(patterns);
+    addPatternIfTargetOpIsIllegal<DecomposeAtenBmmNtOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenFloorDivideOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenFloorDivideScalarOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenNumpyTOp>(patterns);
