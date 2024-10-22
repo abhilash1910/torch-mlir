@@ -1312,6 +1312,55 @@ public:
 } // namespace
 
 namespace {
+// Decompose `aten.mvlgamma` op into basic operations like `aten.arange`, `aten.unsqueeze`, `aten.add`, and `aten.lgamma_`.
+class DecomposeAtenMvlgammaOp : public OpRewritePattern<AtenMvlgammaOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AtenMvlgammaOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value input = op.getSelf();
+    Value p = op.getP();       
+    Type inputType = input.getType();
+    Type inputScalarType = inputType.cast<BaseTensorType>().getDtype();
+    Type floatDtype = getFloatDtype(rewriter, input); 
+
+    if (isIntegralType(inputScalarType)) 
+      input = rewriter.create<AtenToDtypeOp>(loc, floatDtype, input, rewriter.getBoolAttr(false),
+                                             rewriter.getBoolAttr(false));
+    }
+
+    double half = 0.5;
+    Value start = rewriter.create<ConstantOp>(loc, rewriter.getF64FloatAttr(-static_cast<double>(p) * half + half));
+    Value end = rewriter.create<ConstantOp>(loc, rewriter.getF64FloatAttr(half));
+    Value step = rewriter.create<ConstantOp>(loc, rewriter.getF64FloatAttr(half));
+
+    Value arangeTensor = rewriter.create<AtenArangeOp>(
+        loc, input.getType(), start, end, step, floatDtype,
+        rewriter.getNoneType(), rewriter.getNoneType(), rewriter.getNoneType());
+
+    Value unsqueezedInput = rewriter.create<AtenUnsqueezeOp>(loc, input.getType(), input, rewriter.getI64IntegerAttr(-1));
+
+    Value args = rewriter.create<AtenAddTensorOp>(loc, arangeTensor.getType(), arangeTensor, unsqueezedInput);
+
+    Value lgammaResult = rewriter.create<AtenLgammaOp>(loc, args.getType(), args);
+    Value sumResult = rewriter.create<AtenSumDimIntListOp>(loc, lgammaResult.getType(), lgammaResult,
+                                                           rewriter.getI64ArrayAttr({-1}), /*dtype=*/rewriter.getNoneType());
+
+    double p2_sub_p = static_cast<double>(p) * (p - 1);
+    double logPi = std::log(c10::pi<double>);
+    Value constant = rewriter.create<AtenMulScalarOp>(loc, sumResult.getType(), sumResult, rewriter.getF64FloatAttr(p2_sub_p * logPi * 0.25));
+
+    rewriter.replaceOp(op, constant);
+
+    return success();
+  }
+};
+
+} // namespace
+
+namespace {
 class DecomposeAtenSizeOp : public OpRewritePattern<AtenSizeOp> {
 public:
   using OpRewritePattern::OpRewritePattern;
