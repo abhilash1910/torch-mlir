@@ -1346,7 +1346,7 @@ public:
 
     Value lgammaResult = rewriter.create<AtenLgammaOp>(loc, args.getType(), args);
     Value sumResult = rewriter.create<AtenSumDimIntListOp>(loc, lgammaResult.getType(), lgammaResult,
-                                                           rewriter.getI64ArrayAttr({-1}), /*dtype=*/rewriter.getNoneType());
+                                                           rewriter.getI64ArrayAttr({-1}), rewriter.getNoneType());
 
     double p2_sub_p = static_cast<double>(p) * (p - 1);
     double logPi = std::log(c10::pi<double>);
